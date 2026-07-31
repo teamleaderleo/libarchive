@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - name: Validate probe shell
+        run: sh -n contrib/fieldwork/nonseekable_7zip_probe.sh
       - name: Install build and fixture dependencies
         run: |
           sudo apt-get update
@@ -37,8 +39,9 @@ jobs:
       - name: Upload exact probe output
         uses: actions/upload-artifact@v4
         with:
-          name: nonseekable-7zip-probe
+          name: nonseekable-7zip-probe-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             fieldwork-results.txt
             fieldwork-artifacts/
           if-no-files-found: error
+          retention-days: 14
