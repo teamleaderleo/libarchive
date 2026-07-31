@@ -7,9 +7,34 @@ if [ "$#" -ne 1 ]; then
 fi
 
 BSDTAR=$1
-WORK=${TMPDIR:-/tmp}/libarchive-7zip-probe.$$
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/libarchive-7zip-probe.XXXXXX")
 RESULTS=$WORK/results.tsv
-trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+ARTIFACT_ROOT=${FIELDWORK_ARTIFACT_ROOT:-${GITHUB_WORKSPACE:-$PWD}/fieldwork-artifacts}
+
+cleanup() {
+	rm -rf -- "$WORK"
+}
+
+finish() {
+	status=$1
+	trap - EXIT HUP INT TERM
+	cleanup_status=0
+	cleanup || cleanup_status=$?
+	if [ "$status" -ne 0 ]; then
+		exit "$status"
+	fi
+	exit "$cleanup_status"
+}
+
+on_exit() {
+	finish "$?"
+}
+
+trap on_exit EXIT
+trap 'finish 129' HUP
+trap 'finish 130' INT
+trap 'finish 143' TERM
+
 mkdir -p "$WORK/input"
 
 printf 'fieldwork payload\n' >"$WORK/input/payload.txt"
@@ -61,6 +86,6 @@ if [ "$extract_status" -ne 0 ] || [ "$extract_stdout" != "fieldwork payload " ];
 	exit 1
 fi
 
-mkdir -p "$GITHUB_WORKSPACE/fieldwork-artifacts"
-cp "$RESULTS" "$GITHUB_WORKSPACE/fieldwork-artifacts/nonseekable-7zip-results.tsv"
-cp "$WORK"/*.stdout "$WORK"/*.stderr "$GITHUB_WORKSPACE/fieldwork-artifacts/"
+mkdir -p "$ARTIFACT_ROOT"
+cp "$RESULTS" "$ARTIFACT_ROOT/nonseekable-7zip-results.tsv"
+cp "$WORK"/*.stdout "$WORK"/*.stderr "$ARTIFACT_ROOT/"
