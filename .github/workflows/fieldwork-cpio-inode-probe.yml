@@ -8,13 +8,18 @@ on:
       - '.github/workflows/fieldwork-cpio-inode-probe.yml'
       - 'contrib/fieldwork/cpio_inode_probe.py'
       - 'libarchive/archive_write_set_format_cpio*.c'
+  pull_request:
+    paths:
+      - '.github/workflows/fieldwork-cpio-inode-probe.yml'
+      - 'contrib/fieldwork/cpio_inode_probe.py'
+      - 'libarchive/archive_write_set_format_cpio*.c'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
