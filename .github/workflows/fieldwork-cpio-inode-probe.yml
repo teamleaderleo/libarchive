@@ -1,0 +1,79 @@
+name: Fieldwork cpio inode probe
+
+on:
+  push:
+    branches:
+      - linux-fieldwork/cpio-large-inode-probe
+    paths:
+      - '.github/workflows/fieldwork-cpio-inode-probe.yml'
+      - 'contrib/fieldwork/cpio_inode_probe.py'
+      - 'libarchive/archive_write_set_format_cpio*.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate probe
+        run: python3 -m py_compile contrib/fieldwork/cpio_inode_probe.py
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build python3 \
+            libacl1-dev libbz2-dev liblz4-dev liblzma-dev \
+            libssl-dev libxml2-dev libzstd-dev zlib1g-dev
+
+      - name: Configure and build current branch
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DBUILD_SHARED_LIBS=ON \
+            -DENABLE_TEST=ON \
+            -DENABLE_WERROR=OFF
+          cmake --build build --parallel 2
+
+      - name: Run public-API inode discriminator
+        run: |
+          set -eu
+          libarchive=$(find build -type f -name 'libarchive.so*' -print | sort | head -n 1)
+          test -n "$libarchive"
+          LD_LIBRARY_PATH="$(dirname "$libarchive")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            python3 contrib/fieldwork/cpio_inode_probe.py \
+              "$libarchive" cpio-inode-probe.json | tee cpio-inode-probe.txt
+          grep -Fx 'NEWC_DISTINCT_COLLISION=PASS' cpio-inode-probe.txt
+          grep -Fx 'ODC_DISTINCT_UNIQUE=PASS' cpio-inode-probe.txt
+          grep -Fx 'ODC_HARDLINK_STABLE=PASS' cpio-inode-probe.txt
+          cat cpio-inode-probe.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record exact source identity
+        run: |
+          {
+            printf 'libarchive_head=%s\n' "$(git rev-parse HEAD)"
+            printf 'newc_blob=%s\n' "$(git hash-object libarchive/archive_write_set_format_cpio_newc.c)"
+            printf 'odc_blob=%s\n' "$(git hash-object libarchive/archive_write_set_format_cpio_odc.c)"
+            printf 'probe_blob=%s\n' "$(git hash-object contrib/fieldwork/cpio_inode_probe.py)"
+            printf 'product_source_changed=false\n'
+            printf 'external_contact=false\n'
+          } | tee cpio-inode-source.txt
+
+      - name: Upload exact probe evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpio-inode-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            cpio-inode-probe.json
+            cpio-inode-probe.txt
+            cpio-inode-source.txt
+          if-no-files-found: error
+          retention-days: 14
