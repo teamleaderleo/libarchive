@@ -205,3 +205,57 @@ DEFINE_TEST(test_write_format_cpio_newc)
 
 	free(buff);
 }
+
+/*
+ * Distinct source identities must not become one archive hardlink identity
+ * when the source inode exceeds newc's 32-bit field.
+ */
+DEFINE_TEST(test_write_format_cpio_newc_large_inode_identity)
+{
+	struct archive *a;
+	struct archive_entry *entry;
+	char buff[4096];
+	char *first, *second;
+	size_t used;
+
+	assert((a = archive_write_new()) != NULL);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_set_format_cpio_newc(a));
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_add_filter_none(a));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_write_open_memory(a, buff, sizeof(buff), &used));
+
+	assert((entry = archive_entry_new()) != NULL);
+	archive_entry_set_pathname(entry, "small");
+	archive_entry_set_mode(entry, S_IFREG | 0644);
+	archive_entry_set_size(entry, 0);
+	archive_entry_set_devmajor(entry, 0);
+	archive_entry_set_devminor(entry, 7);
+	archive_entry_set_ino64(entry, 1);
+	archive_entry_set_nlink(entry, 2);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, entry));
+	archive_entry_free(entry);
+
+	assert((entry = archive_entry_new()) != NULL);
+	archive_entry_set_pathname(entry, "large");
+	archive_entry_set_mode(entry, S_IFREG | 0644);
+	archive_entry_set_size(entry, 0);
+	archive_entry_set_devmajor(entry, 0);
+	archive_entry_set_devminor(entry, 7);
+	archive_entry_set_ino64(entry, INT64_C(0x100000001));
+	archive_entry_set_nlink(entry, 2);
+	assertEqualIntA(a, ARCHIVE_WARN, archive_write_header(a, entry));
+	archive_entry_free(entry);
+
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_close(a));
+	assertEqualInt(ARCHIVE_OK, archive_write_free(a));
+
+	first = buff;
+	second = buff + 116; /* 110-byte header + "small\0", aligned to 4. */
+	assert(is_hex(first, 110));
+	assert(is_hex(second, 110));
+	assertEqualMem(first, "070701", 6);
+	assertEqualMem(second, "070701", 6);
+	assertEqualMem(first + 110, "small\0", 6);
+	assertEqualMem(second + 110, "large\0", 6);
+	assert(memcmp(first + 6, second + 6, 8) != 0);
+}
