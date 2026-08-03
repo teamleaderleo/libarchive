@@ -165,8 +165,7 @@ index b9de7d362..000000000 100644
 +	}
 +	if (source_ino > 0xffffffff) {
  		archive_set_error(&a->archive, ERANGE,
--		    "large inode number truncated");
-+		    "large inode number translated");
+ 		    "large inode number truncated");
  		ret_final = ARCHIVE_WARN;
  	}
  
