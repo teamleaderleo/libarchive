@@ -6,6 +6,8 @@
  */
 #include "test.h"
 
+#include <locale.h>
+
 static void
 test_standalone_mac_metadata(void)
 {
@@ -67,6 +69,96 @@ test_standalone_mac_metadata(void)
 	assertEqualIntA(a, ARCHIVE_EOF, archive_read_next_header(a, &ae));
 	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
+}
+
+static void
+test_standalone_mac_metadata_wide_pathname(void)
+{
+	static const char metadata_name[] = "._\xcf\x80";
+	static const wchar_t metadata_name_w[] = L"._\x03c0";
+	static const char metadata_data[] = "standalone metadata";
+	static const char next_name[] = "unrelated";
+	static const char next_data[] = "ordinary data";
+	char buff[10240], data[32];
+	char *saved_locale;
+	const char *current_locale;
+	struct archive *a;
+	struct archive_entry *ae;
+	size_t used;
+	int r;
+
+	current_locale = setlocale(LC_ALL, NULL);
+	saved_locale = current_locale == NULL ? NULL : strdup(current_locale);
+	if (setlocale(LC_ALL, "en_US.UTF-8") == NULL) {
+		free(saved_locale);
+		skipping("en_US.UTF-8 locale not available on this system");
+		return;
+	}
+
+	assert((a = archive_write_new()) != NULL);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_set_format_ustar(a));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_write_set_options(a, "hdrcharset=UTF-8"));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_write_open_memory(a, buff, sizeof(buff), &used));
+	assert((ae = archive_entry_new()) != NULL);
+
+	archive_entry_set_pathname(ae, metadata_name);
+	archive_entry_set_mode(ae, AE_IFREG | 0644);
+	archive_entry_set_size(ae, sizeof(metadata_data) - 1);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, ae));
+	assertEqualIntA(a, sizeof(metadata_data) - 1,
+	    archive_write_data(a, metadata_data, sizeof(metadata_data) - 1));
+
+	archive_entry_clear(ae);
+	archive_entry_set_pathname(ae, next_name);
+	archive_entry_set_mode(ae, AE_IFREG | 0644);
+	archive_entry_set_size(ae, sizeof(next_data) - 1);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, ae));
+	assertEqualIntA(a, sizeof(next_data) - 1,
+	    archive_write_data(a, next_data, sizeof(next_data) - 1));
+
+	archive_entry_free(ae);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_close(a));
+	assertEqualInt(ARCHIVE_OK, archive_write_free(a));
+
+	if (setlocale(LC_ALL, "C") == NULL) {
+		if (saved_locale != NULL)
+			setlocale(LC_ALL, saved_locale);
+		free(saved_locale);
+		skipping("C locale not available on this system");
+		return;
+	}
+
+	assert((a = archive_read_new()) != NULL);
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_support_format_tar(a));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_set_option(a, "tar", "mac-ext", "1"));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_read_set_option(a, "tar", "hdrcharset", "UTF-8"));
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_open_memory(a, buff, used));
+
+	r = archive_read_next_header(a, &ae);
+	assert(r == ARCHIVE_OK || r == ARCHIVE_WARN);
+	assertEqualWString(metadata_name_w, archive_entry_pathname_w(ae));
+	assertEqualIntA(a, sizeof(metadata_data) - 1,
+	    archive_read_data(a, data, sizeof(data)));
+	assertEqualMem(metadata_data, data, sizeof(metadata_data) - 1);
+
+	r = archive_read_next_header(a, &ae);
+	assert(r == ARCHIVE_OK || r == ARCHIVE_WARN);
+	assertEqualString(next_name, archive_entry_pathname(ae));
+	assertEqualIntA(a, sizeof(next_data) - 1,
+	    archive_read_data(a, data, sizeof(data)));
+	assertEqualMem(next_data, data, sizeof(next_data) - 1);
+
+	assertEqualIntA(a, ARCHIVE_EOF, archive_read_next_header(a, &ae));
+	assertEqualIntA(a, ARCHIVE_OK, archive_read_close(a));
+	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
+
+	if (saved_locale != NULL)
+		setlocale(LC_ALL, saved_locale);
+	free(saved_locale);
 }
 
 DEFINE_TEST(test_read_format_tar_mac_metadata)
@@ -146,4 +238,5 @@ DEFINE_TEST(test_read_format_tar_mac_metadata)
 
 	free(p);
 	test_standalone_mac_metadata();
+	test_standalone_mac_metadata_wide_pathname();
 }
