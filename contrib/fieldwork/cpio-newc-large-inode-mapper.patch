@@ -2,7 +2,7 @@ diff --git a/libarchive/archive_write_set_format_cpio_newc.c b/libarchive/archiv
 index b9de7d362..000000000 100644
 --- a/libarchive/archive_write_set_format_cpio_newc.c
 +++ b/libarchive/archive_write_set_format_cpio_newc.c
-@@ -40,6 +40,7 @@
+@@ -40,10 +40,13 @@
  #include "archive.h"
  #include "archive_entry.h"
  #include "archive_entry_locale.h"
@@ -10,7 +10,13 @@ index b9de7d362..000000000 100644
  #include "archive_private.h"
  #include "archive_write_private.h"
  #include "archive_write_set_format_private.h"
-@@ -55,12 +56,23 @@ static int      archive_write_newc_options(struct archive_write *,
+ 
++struct cpio;
++
+ static ssize_t	archive_write_newc_data(struct archive_write *,
+ 		    const void *buff, size_t s);
+ static int	archive_write_newc_close(struct archive_write *);
+@@ -55,12 +58,23 @@ static int      archive_write_newc_options(struct archive_write *,
  static int	format_hex(int64_t, void *, int);
  static int64_t	format_hex_recursive(int64_t, char *, int);
 +static int	synthesize_ino_value(struct cpio *, struct archive_entry *,
@@ -34,7 +40,7 @@ index b9de7d362..000000000 100644
  	struct archive_string_conv *opt_sconv;
  	struct archive_string_conv *sconv_default;
  	int		  init_default_conversion;
-@@ -122,6 +134,7 @@ archive_write_set_format_cpio_newc(struct archive *_a)
+@@ -122,6 +136,7 @@ archive_write_set_format_cpio_newc(struct archive *_a)
  		archive_set_error(&a->archive, ENOMEM, "Can't allocate cpio data");
  		return (ARCHIVE_FATAL);
  	}
@@ -42,7 +48,7 @@ index b9de7d362..000000000 100644
  	a->format_data = cpio;
  	a->format_name = "cpio";
  	a->format_options = archive_write_newc_options;
-@@ -163,6 +176,86 @@ archive_write_newc_options(struct archive_write *a, const char *key,
+@@ -163,6 +178,86 @@ archive_write_newc_options(struct archive_write *a, const char *key,
  	return (ARCHIVE_WARN);
  }
  
@@ -128,7 +134,7 @@ index b9de7d362..000000000 100644
  static struct archive_string_conv *
  get_sconv(struct archive_write *a)
  {
-@@ -207,7 +300,8 @@ write_header(struct archive_write *a, struct archive_entry *entry)
+@@ -207,7 +302,8 @@ write_header(struct archive_write *a, struct archive_entry *entry)
  {
  	struct cpio *cpio = a->format_data;
 -	int64_t ino;
@@ -137,7 +143,7 @@ index b9de7d362..000000000 100644
  	const char *p, *path;
  	int ret, ret_final;
  	char h[c_header_size];
-@@ -263,15 +357,28 @@ write_header(struct archive_write *a, struct archive_entry *entry)
+@@ -263,15 +359,28 @@ write_header(struct archive_write *a, struct archive_entry *entry)
  	format_hex(archive_entry_devminor(entry), h + c_devminor_offset,
  	    c_devminor_size);
  
@@ -170,7 +176,7 @@ index b9de7d362..000000000 100644
  	format_hex(archive_entry_mode(entry), h + c_mode_offset, c_mode_size);
  	format_hex(archive_entry_uid(entry), h + c_uid_offset, c_uid_size);
  	format_hex(archive_entry_gid(entry), h + c_gid_offset, c_gid_size);
-@@ -398,6 +505,7 @@ archive_write_newc_free(struct archive_write *a)
+@@ -398,6 +507,7 @@ archive_write_newc_free(struct archive_write *a)
  {
  	struct cpio *cpio = a->format_data;
  
