@@ -1,0 +1,180 @@
+diff --git a/libarchive/archive_write_set_format_cpio_newc.c b/libarchive/archive_write_set_format_cpio_newc.c
+index b9de7d362..000000000 100644
+--- a/libarchive/archive_write_set_format_cpio_newc.c
++++ b/libarchive/archive_write_set_format_cpio_newc.c
+@@ -40,6 +40,7 @@
+ #include "archive.h"
+ #include "archive_entry.h"
+ #include "archive_entry_locale.h"
++#include "archive_integer.h"
+ #include "archive_private.h"
+ #include "archive_write_private.h"
+ #include "archive_write_set_format_private.h"
+@@ -55,12 +56,23 @@ static int      archive_write_newc_options(struct archive_write *,
+ static int	format_hex(int64_t, void *, int);
+ static int64_t	format_hex_recursive(int64_t, char *, int);
++static int	synthesize_ino_value(struct cpio *, struct archive_entry *,
++		    uint32_t *);
+ static int	write_header(struct archive_write *, struct archive_entry *);
+ 
+ struct cpio {
+ 	uint64_t	  entry_bytes_remaining;
+ 	int		  padding;
+ 
++	uint32_t	  ino_next;
++	struct {
++		int64_t devmajor;
++		int64_t devminor;
++		int64_t old;
++		uint32_t new;
++	} *ino_list;
++	size_t		  ino_list_size;
++	size_t		  ino_list_next;
++
+ 	struct archive_string_conv *opt_sconv;
+ 	struct archive_string_conv *sconv_default;
+ 	int		  init_default_conversion;
+@@ -122,6 +134,7 @@ archive_write_set_format_cpio_newc(struct archive *_a)
+ 		archive_set_error(&a->archive, ENOMEM, "Can't allocate cpio data");
+ 		return (ARCHIVE_FATAL);
+ 	}
++	cpio->ino_next = 0xffffffffU;
+ 	a->format_data = cpio;
+ 	a->format_name = "cpio";
+ 	a->format_options = archive_write_newc_options;
+@@ -163,6 +176,86 @@ archive_write_newc_options(struct archive_write *a, const char *key,
+ 	return (ARCHIVE_WARN);
+ }
+ 
++/*
++ * Preserve ordinary in-range inode values, but synthesize every identity
++ * that participates in hardlink matching and every inode that cannot fit in
++ * the newc field.  The full device/inode tuple is the source identity.
++ */
++static int
++synthesize_ino_value(struct cpio *cpio, struct archive_entry *entry,
++    uint32_t *ino_new)
++{
++	int64_t devmajor, devminor, ino;
++	size_t i;
++
++	devmajor = archive_entry_devmajor(entry);
++	devminor = archive_entry_devminor(entry);
++	ino = archive_entry_ino64(entry);
++
++	/* Preserve the end marker and other explicitly unnumbered entries. */
++	if (ino == 0) {
++		*ino_new = 0;
++		return (ARCHIVE_OK);
++	}
++
++	/* An ordinary in-range entry does not need identity translation. */
++	if (ino > 0 && ino <= 0xffffffff && archive_entry_nlink(entry) < 2) {
++		*ino_new = (uint32_t)ino;
++		return (ARCHIVE_OK);
++	}
++
++	/* Reuse the archive value for a repeated hardlink identity. */
++	if (archive_entry_nlink(entry) >= 2) {
++		for (i = 0; i < cpio->ino_list_next; ++i) {
++			if (cpio->ino_list[i].devmajor == devmajor &&
++			    cpio->ino_list[i].devminor == devminor &&
++			    cpio->ino_list[i].old == ino) {
++				*ino_new = cpio->ino_list[i].new;
++				return (ARCHIVE_OK);
++			}
++		}
++	}
++
++	/* Zero is reserved for entries with no inode and for TRAILER!!!. */
++	if (cpio->ino_next == 0)
++		return (ARCHIVE_FAILED);
++
++	*ino_new = cpio->ino_next--;
++
++	/* A single-link overflow entry needs no stable lookup record. */
++	if (archive_entry_nlink(entry) < 2)
++		return (ARCHIVE_OK);
++
++	if (cpio->ino_list_size <= cpio->ino_list_next) {
++		size_t newsize, size;
++		void *newlist;
++
++		if (cpio->ino_list_size < 512)
++			newsize = 512;
++		else if (archive_ckd_mul_size(&newsize,
++		    cpio->ino_list_size, 2))
++			return (ARCHIVE_FATAL);
++		if (archive_ckd_mul_size(&size,
++		    newsize, sizeof(cpio->ino_list[0])))
++			return (ARCHIVE_FATAL);
++
++		newlist = realloc(cpio->ino_list, size);
++		if (newlist == NULL)
++			return (ARCHIVE_FATAL);
++
++		cpio->ino_list_size = newsize;
++		cpio->ino_list = newlist;
++	}
++
++	cpio->ino_list[cpio->ino_list_next].devmajor = devmajor;
++	cpio->ino_list[cpio->ino_list_next].devminor = devminor;
++	cpio->ino_list[cpio->ino_list_next].old = ino;
++	cpio->ino_list[cpio->ino_list_next].new = *ino_new;
++	++cpio->ino_list_next;
++	return (ARCHIVE_OK);
++}
++
+ static struct archive_string_conv *
+ get_sconv(struct archive_write *a)
+ {
+@@ -207,7 +300,8 @@ write_header(struct archive_write *a, struct archive_entry *entry)
+ {
+ 	struct cpio *cpio = a->format_data;
+-	int64_t ino;
++	int64_t source_ino;
++	uint32_t ino;
+ 	const char *p, *path;
+ 	int ret, ret_final;
+ 	char h[c_header_size];
+@@ -263,15 +357,28 @@ write_header(struct archive_write *a, struct archive_entry *entry)
+ 	format_hex(archive_entry_devminor(entry), h + c_devminor_offset,
+ 	    c_devminor_size);
+ 
+-	ino = archive_entry_ino64(entry);
+-	if (ino > 0xffffffff) {
++	source_ino = archive_entry_ino64(entry);
++	ret = synthesize_ino_value(cpio, entry, &ino);
++	if (ret == ARCHIVE_FATAL) {
++		archive_set_error(&a->archive, ENOMEM,
++		    "No memory for ino translation table");
++		ret_final = ARCHIVE_FATAL;
++		goto exit_write_header;
++	}
++	if (ret == ARCHIVE_FAILED) {
++		archive_set_error(&a->archive, ERANGE,
++		    "Too many files for this cpio format");
++		ret_final = ARCHIVE_FATAL;
++		goto exit_write_header;
++	}
++	if (source_ino > 0xffffffff) {
+ 		archive_set_error(&a->archive, ERANGE,
+-		    "large inode number truncated");
++		    "large inode number translated");
+ 		ret_final = ARCHIVE_WARN;
+ 	}
+ 
+ 	/* TODO: Set ret_final to ARCHIVE_WARN if any of these overflow. */
+-	format_hex(ino & 0xffffffff, h + c_ino_offset, c_ino_size);
++	format_hex(ino, h + c_ino_offset, c_ino_size);
+ 	format_hex(archive_entry_mode(entry), h + c_mode_offset, c_mode_size);
+ 	format_hex(archive_entry_uid(entry), h + c_uid_offset, c_uid_size);
+ 	format_hex(archive_entry_gid(entry), h + c_gid_offset, c_gid_size);
+@@ -398,6 +505,7 @@ archive_write_newc_free(struct archive_write *a)
+ {
+ 	struct cpio *cpio = a->format_data;
+ 
++	free(cpio->ino_list);
+ 	free(cpio);
+ 	a->format_data = NULL;
+ 	return (ARCHIVE_OK);
