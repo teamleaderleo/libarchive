@@ -207,15 +207,17 @@ DEFINE_TEST(test_write_format_cpio_newc)
 }
 
 /*
- * Distinct source identities must not become one archive hardlink identity
- * when the source inode exceeds newc's 32-bit field.
+ * Verify the identity contract used when source inode numbers do not fit in
+ * newc's 32-bit inode field.  In-range, unlinked entries retain their inode;
+ * distinct overflow identities receive distinct nonzero values; repeated
+ * hardlink identities remain stable; and device identity is part of the key.
  */
 DEFINE_TEST(test_write_format_cpio_newc_large_inode_identity)
 {
 	struct archive *a;
 	struct archive_entry *entry;
 	char buff[4096];
-	char *first, *second;
+	char *small, *large_a, *large_b, *large_a_link, *large_other_dev;
 	size_t used;
 
 	assert((a = archive_write_new()) != NULL);
@@ -231,12 +233,12 @@ DEFINE_TEST(test_write_format_cpio_newc_large_inode_identity)
 	archive_entry_set_devmajor(entry, 0);
 	archive_entry_set_devminor(entry, 7);
 	archive_entry_set_ino64(entry, 1);
-	archive_entry_set_nlink(entry, 2);
+	archive_entry_set_nlink(entry, 1);
 	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, entry));
 	archive_entry_free(entry);
 
 	assert((entry = archive_entry_new()) != NULL);
-	archive_entry_set_pathname(entry, "large");
+	archive_entry_set_pathname(entry, "big-a");
 	archive_entry_set_mode(entry, S_IFREG | 0644);
 	archive_entry_set_size(entry, 0);
 	archive_entry_set_devmajor(entry, 0);
@@ -246,16 +248,70 @@ DEFINE_TEST(test_write_format_cpio_newc_large_inode_identity)
 	assertEqualIntA(a, ARCHIVE_WARN, archive_write_header(a, entry));
 	archive_entry_free(entry);
 
+	assert((entry = archive_entry_new()) != NULL);
+	archive_entry_set_pathname(entry, "big-b");
+	archive_entry_set_mode(entry, S_IFREG | 0644);
+	archive_entry_set_size(entry, 0);
+	archive_entry_set_devmajor(entry, 0);
+	archive_entry_set_devminor(entry, 7);
+	archive_entry_set_ino64(entry, INT64_C(0x200000001));
+	archive_entry_set_nlink(entry, 2);
+	assertEqualIntA(a, ARCHIVE_WARN, archive_write_header(a, entry));
+	archive_entry_free(entry);
+
+	assert((entry = archive_entry_new()) != NULL);
+	archive_entry_set_pathname(entry, "big-a2");
+	archive_entry_set_mode(entry, S_IFREG | 0644);
+	archive_entry_set_size(entry, 0);
+	archive_entry_set_devmajor(entry, 0);
+	archive_entry_set_devminor(entry, 7);
+	archive_entry_set_ino64(entry, INT64_C(0x100000001));
+	archive_entry_set_nlink(entry, 2);
+	assertEqualIntA(a, ARCHIVE_WARN, archive_write_header(a, entry));
+	archive_entry_free(entry);
+
+	assert((entry = archive_entry_new()) != NULL);
+	archive_entry_set_pathname(entry, "big-c");
+	archive_entry_set_mode(entry, S_IFREG | 0644);
+	archive_entry_set_size(entry, 0);
+	archive_entry_set_devmajor(entry, 0);
+	archive_entry_set_devminor(entry, 8);
+	archive_entry_set_ino64(entry, INT64_C(0x100000001));
+	archive_entry_set_nlink(entry, 2);
+	assertEqualIntA(a, ARCHIVE_WARN, archive_write_header(a, entry));
+	archive_entry_free(entry);
+
 	assertEqualIntA(a, ARCHIVE_OK, archive_write_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_write_free(a));
 
-	first = buff;
-	second = buff + 116; /* 110-byte header + "small\0", aligned to 4. */
-	assert(is_hex(first, 110));
-	assert(is_hex(second, 110));
-	assertEqualMem(first, "070701", 6);
-	assertEqualMem(second, "070701", 6);
-	assertEqualMem(first + 110, "small\0", 6);
-	assertEqualMem(second + 110, "large\0", 6);
-	assert(memcmp(first + 6, second + 6, 8) != 0);
+	small = buff;
+	large_a = small + 116;
+	large_b = large_a + 116;
+	large_a_link = large_b + 116;
+	large_other_dev = large_a_link + 120;
+
+	assert(is_hex(small, 110));
+	assert(is_hex(large_a, 110));
+	assert(is_hex(large_b, 110));
+	assert(is_hex(large_a_link, 110));
+	assert(is_hex(large_other_dev, 110));
+	assertEqualMem(small, "070701", 6);
+	assertEqualMem(large_a, "070701", 6);
+	assertEqualMem(large_b, "070701", 6);
+	assertEqualMem(large_a_link, "070701", 6);
+	assertEqualMem(large_other_dev, "070701", 6);
+	assertEqualMem(small + 110, "small\0", 6);
+	assertEqualMem(large_a + 110, "big-a\0", 6);
+	assertEqualMem(large_b + 110, "big-b\0", 6);
+	assertEqualMem(large_a_link + 110, "big-a2\0", 7);
+	assertEqualMem(large_other_dev + 110, "big-c\0", 6);
+
+	assertEqualMem(small + 6, "00000001", 8);
+	assert(memcmp(large_a + 6, "00000000", 8) != 0);
+	assert(memcmp(large_b + 6, "00000000", 8) != 0);
+	assert(memcmp(large_other_dev + 6, "00000000", 8) != 0);
+	assert(memcmp(small + 6, large_a + 6, 8) != 0);
+	assert(memcmp(large_a + 6, large_b + 6, 8) != 0);
+	assertEqualMem(large_a + 6, large_a_link + 6, 8);
+	assert(memcmp(large_a + 6, large_other_dev + 6, 8) != 0);
 }
