@@ -8,24 +8,32 @@ on:
       - linux-fieldwork/cpio-newc-large-inode-product
     paths:
       - ".github/workflows/fieldwork-promote-cpio-newc-mapper.yml"
+  pull_request:
+    branches:
+      - master
+    paths:
+      - ".github/workflows/fieldwork-promote-cpio-newc-mapper.yml"
 
 permissions:
   contents: write
+
+env:
+  EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   promote:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out product branch
+      - name: Check out exact product head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: linux-fieldwork/cpio-newc-large-inode-product
+          ref: ${{ env.EXPECTED_HEAD }}
           fetch-depth: 0
 
       - name: Apply tested mapper and commit product source
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           grep -Fq 'test_write_format_cpio_newc_large_inode_identity' \
             libarchive/test/test_write_format_cpio_newc.c
           grep -Fq 'small_entry' libarchive/test/test_write_format_cpio_newc.c
