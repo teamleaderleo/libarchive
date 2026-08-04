@@ -16,7 +16,7 @@ index b9de7d362..000000000 100644
  static ssize_t	archive_write_newc_data(struct archive_write *,
  		    const void *buff, size_t s);
  static int	archive_write_newc_close(struct archive_write *);
-@@ -55,12 +58,24 @@ static int      archive_write_newc_options(struct archive_write *,
+@@ -55,11 +58,23 @@ static int      archive_write_newc_options(struct archive_write *,
  static int	format_hex(int64_t, void *, int);
  static int64_t	format_hex_recursive(int64_t, char *, int);
 +static int	synthesize_ino_value(struct cpio *, struct archive_entry *,
@@ -134,7 +134,7 @@ index b9de7d362..000000000 100644
  static struct archive_string_conv *
  get_sconv(struct archive_write *a)
  {
-@@ -207,7 +302,8 @@ write_header(struct archive_write *a, struct archive_entry *entry)
+@@ -207,6 +302,7 @@ write_header(struct archive_write *a, struct archive_entry *entry)
  {
  	struct cpio *cpio = a->format_data;
 -	int64_t ino;
