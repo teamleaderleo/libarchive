@@ -1,6 +1,7 @@
 ---
 name: Fieldwork promote cpio newc mapper
 
+# Temporary owned-fork promotion lane. Remove after the direct product commit.
 on:
   push:
     branches:
