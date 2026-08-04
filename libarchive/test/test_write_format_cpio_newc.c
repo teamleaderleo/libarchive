@@ -217,7 +217,7 @@ DEFINE_TEST(test_write_format_cpio_newc_large_inode_identity)
 	struct archive *a;
 	struct archive_entry *entry;
 	char buff[4096];
-	char *small, *large_a, *large_b, *large_a_link, *large_other_dev;
+	char *small_entry, *large_a, *large_b, *large_a_link, *large_other_dev;
 	size_t used;
 
 	assert((a = archive_write_new()) != NULL);
@@ -284,33 +284,33 @@ DEFINE_TEST(test_write_format_cpio_newc_large_inode_identity)
 	assertEqualIntA(a, ARCHIVE_OK, archive_write_close(a));
 	assertEqualInt(ARCHIVE_OK, archive_write_free(a));
 
-	small = buff;
-	large_a = small + 116;
+	small_entry = buff;
+	large_a = small_entry + 116;
 	large_b = large_a + 116;
 	large_a_link = large_b + 116;
 	large_other_dev = large_a_link + 120;
 
-	assert(is_hex(small, 110));
+	assert(is_hex(small_entry, 110));
 	assert(is_hex(large_a, 110));
 	assert(is_hex(large_b, 110));
 	assert(is_hex(large_a_link, 110));
 	assert(is_hex(large_other_dev, 110));
-	assertEqualMem(small, "070701", 6);
+	assertEqualMem(small_entry, "070701", 6);
 	assertEqualMem(large_a, "070701", 6);
 	assertEqualMem(large_b, "070701", 6);
 	assertEqualMem(large_a_link, "070701", 6);
 	assertEqualMem(large_other_dev, "070701", 6);
-	assertEqualMem(small + 110, "small\0", 6);
+	assertEqualMem(small_entry + 110, "small\0", 6);
 	assertEqualMem(large_a + 110, "big-a\0", 6);
 	assertEqualMem(large_b + 110, "big-b\0", 6);
 	assertEqualMem(large_a_link + 110, "big-a2\0", 7);
 	assertEqualMem(large_other_dev + 110, "big-c\0", 6);
 
-	assertEqualMem(small + 6, "00000001", 8);
+	assertEqualMem(small_entry + 6, "00000001", 8);
 	assert(memcmp(large_a + 6, "00000000", 8) != 0);
 	assert(memcmp(large_b + 6, "00000000", 8) != 0);
 	assert(memcmp(large_other_dev + 6, "00000000", 8) != 0);
-	assert(memcmp(small + 6, large_a + 6, 8) != 0);
+	assert(memcmp(small_entry + 6, large_a + 6, 8) != 0);
 	assert(memcmp(large_a + 6, large_b + 6, 8) != 0);
 	assertEqualMem(large_a + 6, large_a_link + 6, 8);
 	assert(memcmp(large_a + 6, large_other_dev + 6, 8) != 0);
