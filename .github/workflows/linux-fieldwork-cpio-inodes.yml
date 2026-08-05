@@ -12,34 +12,83 @@ on:
 permissions:
   contents: read
 
+env:
+  SOURCE_BASE_SHA: ca8b5cdfe3853318fbc3edb7b3e39709d5516f4a
+
 jobs:
   baseline:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify carrier identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_BASE_SHA" HEAD
+          test "$(git diff --name-only "$SOURCE_BASE_SHA" HEAD | sort)" = $'.github/workflows/linux-fieldwork-cpio-inodes.yml\nlinux-fieldwork/cpio-inodes/HANDOFF.md\nlinux-fieldwork/cpio-inodes/apply_baseline_test.py'
+          git diff --check "$SOURCE_BASE_SHA" HEAD
+
       - name: Apply deterministic baseline test
         run: python3 linux-fieldwork/cpio-inodes/apply_baseline_test.py
-      - name: Verify scope
+
+      - name: Verify generated test scope
+        shell: bash
         run: |
+          set -euo pipefail
           git diff --check
-          test "$(git diff --name-only | wc -l)" -eq 1
           test "$(git diff --name-only)" = 'libarchive/test/test_write_format_cpio.c'
+
       - name: Configure focused test build
         run: |
-          cmake -S . -B build \
+          cmake -S . -B "$RUNNER_TEMP/libarchive-build" \
             -DENABLE_TEST=ON \
             -DENABLE_WERROR=OFF \
             -DENABLE_INSTALL=OFF
+
       - name: Build libarchive test binary
-        run: cmake --build build --target libarchive_test --parallel 2
+        run: cmake --build "$RUNNER_TEMP/libarchive-build" --target libarchive_test --parallel 2
+
       - name: Reproduce deterministic newc identity collision
-        run: build/libarchive/test/libarchive_test -v test_write_format_cpio
-      - name: Retain baseline diff
-        run: git diff --binary > /tmp/cpio-inode-baseline.patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/cpio-inode-evidence"
+          mkdir -p "$evidence"
+          "$RUNNER_TEMP/libarchive-build/libarchive/test/libarchive_test" \
+            -v test_write_format_cpio \
+            2>&1 | tee "$evidence/test.log"
+
+      - name: Retain exact evidence and clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/cpio-inode-evidence"
+          mkdir -p "$evidence"
+          git diff --binary > "$evidence/cpio-inode-baseline.patch"
+          {
+            echo "carrier_head=$(git rev-parse HEAD)"
+            echo "carrier_base=$SOURCE_BASE_SHA"
+            echo "carrier_tree=$(git rev-parse HEAD^{tree})"
+            echo "source_blob=$(git rev-parse HEAD:libarchive/archive_write_set_format_cpio_newc.c)"
+            echo "test_blob_before=$(git rev-parse HEAD:libarchive/test/test_write_format_cpio.c)"
+            echo "test_blob_after=$(git hash-object libarchive/test/test_write_format_cpio.c)"
+            cmake --version | head -n1
+            cc --version | head -n1
+          } > "$evidence/identity.txt"
+          git restore libarchive/test/test_write_format_cpio.c
+          test -z "$(git status --porcelain)"
+          rm -rf "$RUNNER_TEMP/libarchive-build"
+          test ! -e "$RUNNER_TEMP/libarchive-build"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: linux-fieldwork-cpio-inode-baseline
-          path: /tmp/cpio-inode-baseline.patch
-          if-no-files-found: warn
+          name: linux-fieldwork-cpio-inode-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cpio-inode-evidence/
+          if-no-files-found: error
+          retention-days: 30
