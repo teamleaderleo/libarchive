@@ -74,8 +74,8 @@ test_newc_large_inode_collision(void)
 	    "%#jx and %#jx",
 	    (uintmax_t)source_inodes[0], (uintmax_t)source_inodes[1],
 	    (uintmax_t)archived_inodes[0], (uintmax_t)archived_inodes[1]);
-	assertEqualInt64(1, archived_inodes[0]);
-	assertEqualInt64(archived_inodes[0], archived_inodes[1]);
+	assertEqualInt(1, archived_inodes[0]);
+	assertEqualInt(archived_inodes[0], archived_inodes[1]);
 
 	free(buff);
 }
