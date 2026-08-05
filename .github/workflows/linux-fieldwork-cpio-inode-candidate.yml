@@ -1,0 +1,116 @@
+name: Linux Fieldwork cpio inode candidate
+
+on:
+  push:
+    branches:
+      - linux-fieldwork/cpio-inode-synthesis-candidate
+  pull_request:
+    branches:
+      - linux-fieldwork/cpio-inode-upstream-snapshot
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_BASE_SHA: ca8b5cdfe3853318fbc3edb7b3e39709d5516f4a
+
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify carrier identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_BASE_SHA" HEAD
+          git diff --check "$SOURCE_BASE_SHA" HEAD
+
+      - name: Apply source and regression candidates
+        run: |
+          python3 linux-fieldwork/cpio-inodes/run_synthesis_candidate.py
+          python3 linux-fieldwork/cpio-inodes/apply_synthesis_tests.py
+          python3 linux-fieldwork/cpio-inodes/apply_synthesis_program_tests.py
+
+      - name: Verify generated source scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --name-only | sort | tee "$RUNNER_TEMP/generated-files.txt"
+          test "$(cat "$RUNNER_TEMP/generated-files.txt")" = $'cpio/test/test_format_newc.c\nlibarchive/archive_write_set_format_cpio_newc.c\nlibarchive/test/test_write_format_cpio.c'
+
+      - name: Configure focused test build
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/libarchive-build" \
+            -DENABLE_TEST=ON \
+            -DENABLE_CPIO=ON \
+            -DENABLE_WERROR=OFF \
+            -DENABLE_INSTALL=OFF
+
+      - name: Build library and cpio test binaries
+        run: |
+          cmake --build "$RUNNER_TEMP/libarchive-build" \
+            --target libarchive_test bsdcpio bsdcpio_test \
+            --parallel 2
+
+      - name: Run library-level inode and format tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/cpio-inode-candidate-evidence"
+          mkdir -p "$evidence"
+          "$RUNNER_TEMP/libarchive-build/libarchive/test/libarchive_test" \
+            -r "$GITHUB_WORKSPACE/libarchive/test" \
+            -v test_write_format_cpio test_write_format_cpio_newc \
+            2>&1 | tee "$evidence/libarchive-test.log"
+
+      - name: Run bsdcpio reported failure surfaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/cpio-inode-candidate-evidence"
+          "$RUNNER_TEMP/libarchive-build/cpio/test/bsdcpio_test" \
+            -p "$RUNNER_TEMP/libarchive-build/cpio/bsdcpio" \
+            -r "$GITHUB_WORKSPACE/cpio/test" \
+            -v test_format_newc test_option_c \
+            2>&1 | tee "$evidence/bsdcpio-test.log"
+
+      - name: Retain exact candidate and clean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/cpio-inode-candidate-evidence"
+          mkdir -p "$evidence"
+          git diff --binary > "$evidence/cpio-inode-synthesis.patch"
+          {
+            echo "carrier_head=$(git rev-parse HEAD)"
+            echo "carrier_base=$SOURCE_BASE_SHA"
+            echo "source_before=$(git rev-parse HEAD:libarchive/archive_write_set_format_cpio_newc.c)"
+            echo "source_after=$(git hash-object libarchive/archive_write_set_format_cpio_newc.c)"
+            echo "library_test_after=$(git hash-object libarchive/test/test_write_format_cpio.c)"
+            echo "cpio_test_after=$(git hash-object cpio/test/test_format_newc.c)"
+            cmake --version | head -n1
+            cc --version | head -n1
+          } > "$evidence/identity.txt"
+          git restore \
+            libarchive/archive_write_set_format_cpio_newc.c \
+            libarchive/test/test_write_format_cpio.c \
+            cpio/test/test_format_newc.c
+          test -z "$(git status --porcelain)"
+          rm -rf "$RUNNER_TEMP/libarchive-build"
+          test ! -e "$RUNNER_TEMP/libarchive-build"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: linux-fieldwork-cpio-inode-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cpio-inode-candidate-evidence/
+          if-no-files-found: error
+          retention-days: 30
