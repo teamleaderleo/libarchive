@@ -59,7 +59,9 @@ jobs:
           set -euo pipefail
           evidence="$RUNNER_TEMP/cpio-inode-evidence"
           mkdir -p "$evidence"
-          "$RUNNER_TEMP/libarchive-build/libarchive/test/libarchive_test" \
+          test_bin="$RUNNER_TEMP/libarchive-build/bin/libarchive_test"
+          test -x "$test_bin"
+          "$test_bin" \
             -r "$GITHUB_WORKSPACE/libarchive/test" \
             -v test_write_format_cpio \
             2>&1 | tee "$evidence/test.log"
