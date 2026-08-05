@@ -1,0 +1,45 @@
+name: Linux Fieldwork cpio inode mapping
+
+on:
+  push:
+    branches:
+      - linux-fieldwork/cpio-inode-remap
+  pull_request:
+    branches:
+      - linux-fieldwork/cpio-inode-upstream-snapshot
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Apply deterministic baseline test
+        run: python3 linux-fieldwork/cpio-inodes/apply_baseline_test.py
+      - name: Verify scope
+        run: |
+          git diff --check
+          test "$(git diff --name-only | wc -l)" -eq 1
+          test "$(git diff --name-only)" = 'libarchive/test/test_write_format_cpio.c'
+      - name: Configure focused test build
+        run: |
+          cmake -S . -B build \
+            -DENABLE_TEST=ON \
+            -DENABLE_WERROR=OFF \
+            -DENABLE_INSTALL=OFF
+      - name: Build libarchive test binary
+        run: cmake --build build --target libarchive_test --parallel 2
+      - name: Reproduce deterministic newc identity collision
+        run: build/libarchive/test/libarchive_test -v test_write_format_cpio
+      - name: Retain baseline diff
+        run: git diff --binary > /tmp/cpio-inode-baseline.patch
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: linux-fieldwork-cpio-inode-baseline
+          path: /tmp/cpio-inode-baseline.patch
+          if-no-files-found: warn
