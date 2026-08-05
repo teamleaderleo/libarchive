@@ -66,7 +66,9 @@ jobs:
           set -euo pipefail
           evidence="$RUNNER_TEMP/cpio-inode-candidate-evidence"
           mkdir -p "$evidence"
-          "$RUNNER_TEMP/libarchive-build/libarchive/test/libarchive_test" \
+          test_bin="$RUNNER_TEMP/libarchive-build/bin/libarchive_test"
+          test -x "$test_bin"
+          "$test_bin" \
             -r "$GITHUB_WORKSPACE/libarchive/test" \
             -v test_write_format_cpio test_write_format_cpio_newc \
             2>&1 | tee "$evidence/libarchive-test.log"
@@ -76,8 +78,12 @@ jobs:
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/cpio-inode-candidate-evidence"
-          "$RUNNER_TEMP/libarchive-build/cpio/test/bsdcpio_test" \
-            -p "$RUNNER_TEMP/libarchive-build/cpio/bsdcpio" \
+          test_bin="$RUNNER_TEMP/libarchive-build/bin/bsdcpio_test"
+          program="$RUNNER_TEMP/libarchive-build/bin/bsdcpio"
+          test -x "$test_bin"
+          test -x "$program"
+          "$test_bin" \
+            -p "$program" \
             -r "$GITHUB_WORKSPACE/cpio/test" \
             -v test_format_newc test_option_c \
             2>&1 | tee "$evidence/bsdcpio-test.log"
