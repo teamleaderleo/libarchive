@@ -1,7 +1,7 @@
 diff --git a/libarchive/archive_write_set_format_cpio_newc.c b/libarchive/archive_write_set_format_cpio_newc.c
 --- a/libarchive/archive_write_set_format_cpio_newc.c
 +++ b/libarchive/archive_write_set_format_cpio_newc.c
-@@ -193,9 +193,10 @@ synthesize_ino_value(struct cpio *cpio, struct archive_entry *entry,
+@@ -194,8 +194,9 @@ synthesize_ino_value(struct cpio *cpio, struct archive_entry *entry,
  	devminor = archive_entry_devminor(entry);
  	ino = archive_entry_ino64(entry);
  
