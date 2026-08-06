@@ -78,6 +78,38 @@ test_newc_synthetic_inode_mapping(void)
 
 	free(buff);
 }
+
+static void
+test_newc_zero_inode_hardlink_rejected(void)
+{
+	struct archive_entry *ae;
+	struct archive *a;
+	char buff[1024];
+	size_t used = 0;
+
+	assert((a = archive_write_new()) != NULL);
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_set_format_cpio_newc(a));
+	assertEqualIntA(a, ARCHIVE_OK, archive_write_add_filter_none(a));
+	assertEqualIntA(a, ARCHIVE_OK,
+	    archive_write_open_memory(a, buff, sizeof(buff), &used));
+
+	assert((ae = archive_entry_new()) != NULL);
+	archive_entry_set_pathname(ae, "ambiguous-zero-hardlink");
+	archive_entry_set_filetype(ae, AE_IFREG);
+	archive_entry_set_perm(ae, 0644);
+	archive_entry_set_size(ae, 0);
+	archive_entry_set_devmajor(ae, 1);
+	archive_entry_set_devminor(ae, 1);
+	archive_entry_set_ino64(ae, 0);
+	archive_entry_set_nlink(ae, 2);
+
+	assertEqualIntA(a, ARCHIVE_FATAL, archive_write_header(a, ae));
+	assertEqualString("Hardlink identity requires a nonzero inode",
+	    archive_error_string(a));
+
+	archive_entry_free(ae);
+	(void)archive_write_free(a);
+}
 '''
 text = text.replace(marker, helper + marker, 1)
 
@@ -86,7 +118,9 @@ if text.count(call) != 1:
     raise RuntimeError("unexpected newc test call count")
 text = text.replace(
     call,
-    call + "\ttest_newc_synthetic_inode_mapping();\n",
+    call
+    + "\ttest_newc_synthetic_inode_mapping();\n"
+    + "\ttest_newc_zero_inode_hardlink_rejected();\n",
     1,
 )
 
