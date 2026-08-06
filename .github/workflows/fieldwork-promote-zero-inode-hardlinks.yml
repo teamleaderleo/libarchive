@@ -1,6 +1,7 @@
 ---
 name: Fieldwork promote zero-inode hardlinks
 
+# Second push registers this temporary workflow after its bootstrap commit.
 on:
   push:
     branches:
