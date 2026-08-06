@@ -1,0 +1,128 @@
+diff --git a/libarchive/archive_write_set_format_cpio_newc.c b/libarchive/archive_write_set_format_cpio_newc.c
+--- a/libarchive/archive_write_set_format_cpio_newc.c
++++ b/libarchive/archive_write_set_format_cpio_newc.c
+@@ -194,8 +194,9 @@ synthesize_ino_value(struct cpio *cpio, struct archive_entry *entry,
+ 	devminor = archive_entry_devminor(entry);
+ 	ino = archive_entry_ino64(entry);
+ 
+-	/* Preserve the end marker and other explicitly unnumbered entries. */
+-	if (ino == 0) {
++	/* Preserve unnumbered directories and entries that do not participate
++	 * in hardlink identity. */
++	if (ino == 0 && (archive_entry_filetype(entry) == AE_IFDIR || archive_entry_nlink(entry) < 2)) {
+ 		*ino_new = 0;
+ 		return (ARCHIVE_OK);
+ 	}
+diff --git a/libarchive/test/test_write_format_cpio_newc.c b/libarchive/test/test_write_format_cpio_newc.c
+--- a/libarchive/test/test_write_format_cpio_newc.c
++++ b/libarchive/test/test_write_format_cpio_newc.c
+@@ -315,3 +315,109 @@ DEFINE_TEST(test_write_format_cpio_newc_large_inode_identity)
+ 	assertEqualMem(large_a + 6, large_a_link + 6, 8);
+ 	assert(memcmp(large_a + 6, large_other_dev + 6, 8) != 0);
+ }
++
++/*
++ * Inode zero remains reserved for ordinary unlinked entries, but multiply
++ * linked entries still require a stable device/inode identity.  Verify that
++ * one zero-inode hardlink group is stable, a group on another device remains
++ * distinct, and an ordinary zero-inode entry stays serialized as zero.
++ */
++DEFINE_TEST(test_write_format_cpio_newc_zero_inode_hardlinks)
++{
++	struct archive *a;
++	struct archive_entry *entry;
++	char buff[2048];
++	char *zero_single, *zero_a, *zero_a_link, *zero_b;
++	size_t used;
++
++	assert((a = archive_write_new()) != NULL);
++	assertEqualIntA(a, ARCHIVE_OK, archive_write_set_format_cpio_newc(a));
++	assertEqualIntA(a, ARCHIVE_OK, archive_write_add_filter_none(a));
++	assertEqualIntA(a, ARCHIVE_OK,
++	    archive_write_open_memory(a, buff, sizeof(buff), &used));
++
++	assert((entry = archive_entry_new()) != NULL);
++	archive_entry_set_pathname(entry, "zero");
++	archive_entry_set_mode(entry, S_IFREG | 0644);
++	archive_entry_set_size(entry, 0);
++	archive_entry_set_devmajor(entry, 0);
++	archive_entry_set_devminor(entry, 7);
++	archive_entry_set_ino64(entry, 0);
++	archive_entry_set_nlink(entry, 1);
++	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, entry));
++	archive_entry_free(entry);
++
++	assert((entry = archive_entry_new()) != NULL);
++	archive_entry_set_pathname(entry, "zero-a");
++	archive_entry_set_mode(entry, S_IFREG | 0644);
++	archive_entry_set_size(entry, 0);
++	archive_entry_set_devmajor(entry, 0);
++	archive_entry_set_devminor(entry, 7);
++	archive_entry_set_ino64(entry, 0);
++	archive_entry_set_nlink(entry, 2);
++	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, entry));
++	archive_entry_free(entry);
++
++	assert((entry = archive_entry_new()) != NULL);
++	archive_entry_set_pathname(entry, "zero-a2");
++	archive_entry_set_mode(entry, S_IFREG | 0644);
++	archive_entry_set_size(entry, 0);
++	archive_entry_set_devmajor(entry, 0);
++	archive_entry_set_devminor(entry, 7);
++	archive_entry_set_ino64(entry, 0);
++	archive_entry_set_nlink(entry, 2);
++	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, entry));
++	archive_entry_free(entry);
++
++	assert((entry = archive_entry_new()) != NULL);
++	archive_entry_set_pathname(entry, "zero-b");
++	archive_entry_set_mode(entry, S_IFREG | 0644);
++	archive_entry_set_size(entry, 0);
++	archive_entry_set_devmajor(entry, 0);
++	archive_entry_set_devminor(entry, 8);
++	archive_entry_set_ino64(entry, 0);
++	archive_entry_set_nlink(entry, 2);
++	assertEqualIntA(a, ARCHIVE_OK, archive_write_header(a, entry));
++	archive_entry_free(entry);
++
++	assertEqualIntA(a, ARCHIVE_OK, archive_write_close(a));
++	assertEqualInt(ARCHIVE_OK, archive_write_free(a));
++
++	zero_single = buff;
++	zero_a = zero_single + 116;
++	zero_a_link = zero_a + 120;
++	zero_b = zero_a_link + 120;
++
++	assertEqualMem(zero_single + 110, "zero\0", 5);
++	assertEqualMem(zero_a + 110, "zero-a\0", 7);
++	assertEqualMem(zero_a_link + 110, "zero-a2\0", 8);
++	assertEqualMem(zero_b + 110, "zero-b\0", 7);
++	assertEqualMem(zero_single + 6, "00000000", 8);
++	assert(memcmp(zero_a + 6, "00000000", 8) != 0);
++	assertEqualMem(zero_a + 6, zero_a_link + 6, 8);
++	assert(memcmp(zero_a + 6, zero_b + 6, 8) != 0);
++
++	assert((a = archive_read_new()) != NULL);
++	assertEqualIntA(a, ARCHIVE_OK, archive_read_support_format_cpio(a));
++	assertEqualIntA(a, ARCHIVE_OK, archive_read_open_memory(a, buff, used));
++
++	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &entry));
++	assertEqualString("zero", archive_entry_pathname(entry));
++	assert(archive_entry_hardlink(entry) == NULL);
++
++	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &entry));
++	assertEqualString("zero-a", archive_entry_pathname(entry));
++	assert(archive_entry_hardlink(entry) == NULL);
++
++	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &entry));
++	assertEqualString("zero-a2", archive_entry_pathname(entry));
++	assertEqualString("zero-a", archive_entry_hardlink(entry));
++
++	assertEqualIntA(a, ARCHIVE_OK, archive_read_next_header(a, &entry));
++	assertEqualString("zero-b", archive_entry_pathname(entry));
++	assert(archive_entry_hardlink(entry) == NULL);
++
++	assertEqualIntA(a, ARCHIVE_EOF, archive_read_next_header(a, &entry));
++	assertEqualInt(ARCHIVE_OK, archive_read_close(a));
++	assertEqualInt(ARCHIVE_OK, archive_read_free(a));
++}
