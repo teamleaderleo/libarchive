@@ -1,0 +1,118 @@
+name: Materialize bsdtar append read-error ownership
+
+on:
+  push:
+    branches:
+      - fieldwork/bsdtar-append-read-error
+    paths:
+      - .github/workflows/fieldwork-materialize-bsdtar-append-read-error.yml
+      - .github/fieldwork-bsdtar-append-read-error-trigger
+  pull_request:
+    branches:
+      - fieldwork/libarchive-canonical-2026-08-06
+    paths:
+      - .github/workflows/fieldwork-materialize-bsdtar-append-read-error.yml
+      - .github/fieldwork-bsdtar-append-read-error-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: >-
+      github.repository == 'teamleaderleo/libarchive' &&
+      (github.ref_name == 'fieldwork/bsdtar-append-read-error' ||
+       github.head_ref == 'fieldwork/bsdtar-append-read-error')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact candidate branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: fieldwork/bsdtar-append-read-error
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build pkg-config \
+            zlib1g-dev libbz2-dev liblzma-dev libzstd-dev liblz4-dev \
+            libssl-dev libxml2-dev
+
+      - name: Materialize bounded source correction
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("tar/write.c")
+          text = path.read_text()
+          old = '''\tif (r < ARCHIVE_WARN) {
+          \t\tlafe_warnc(archive_errno(a), "%s", archive_error_string(a));
+          \t\treturn (-1);
+          \t}
+          '''
+          new = '''\tif (r < ARCHIVE_WARN) {
+          \t\tlafe_warnc(archive_errno(in_a), "%s", archive_error_string(in_a));
+          \t\treturn (-1);
+          \t}
+          '''
+          if new not in text:
+              if text.count(old) != 1:
+                  raise SystemExit("input data-read diagnostic block changed")
+              path.write_text(text.replace(old, new, 1))
+          PY
+          git diff --check
+
+      - name: Build bsdtar
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build -G Ninja -DENABLE_TEST=OFF
+          cmake --build build --target bsdtar
+
+      - name: Exercise truncated @archive input
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BSDTAR="$(find build -type f -name bsdtar -perm -111 | head -n1)"
+          test -n "$BSDTAR"
+          mkdir fixture
+          dd if=/dev/zero of=fixture/payload.bin bs=1024 count=64 status=none
+          "$BSDTAR" -cf valid.tar -C fixture payload.bin
+          cp valid.tar truncated.tar
+          truncate -s 4096 truncated.tar
+
+          set +e
+          "$BSDTAR" -cf output.tar @truncated.tar >append.out 2>append.err
+          status=$?
+          set -e
+          cat append.err
+          test "$status" -ne 0
+          grep -F "Truncated tar archive" append.err
+          ! grep -F "Error reading archive" append.err
+
+          "$BSDTAR" -cf healthy-output.tar @valid.tar >healthy.out 2>healthy.err
+          test ! -s healthy.out
+          test ! -s healthy.err
+          "$BSDTAR" -tf healthy-output.tar | grep -Fx payload.bin
+
+      - name: Remove carrier and commit exact product fence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f \
+            .github/workflows/fieldwork-materialize-bsdtar-append-read-error.yml \
+            .github/fieldwork-bsdtar-append-read-error-trigger
+          git config user.name "fieldwork-bot"
+          git config user.email "fieldwork@example.invalid"
+          git add -A
+          changed="$(git diff --cached --name-only)"
+          printf '%s\n' "$changed"
+          test "$changed" = "tar/write.c"
+          git commit -m "bsdtar: report input error while appending archive"
+          git push origin HEAD:fieldwork/bsdtar-append-read-error
