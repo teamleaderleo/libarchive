@@ -194,8 +194,9 @@ synthesize_ino_value(struct cpio *cpio, struct archive_entry *entry,
 	devminor = archive_entry_devminor(entry);
 	ino = archive_entry_ino64(entry);
 
-	/* Preserve the end marker and other explicitly unnumbered entries. */
-	if (ino == 0) {
+	/* Preserve unnumbered directories and entries that do not participate
+	 * in hardlink identity. */
+	if (ino == 0 && (archive_entry_filetype(entry) == AE_IFDIR || archive_entry_nlink(entry) < 2)) {
 		*ino_new = 0;
 		return (ARCHIVE_OK);
 	}
