@@ -66,6 +66,8 @@ helper = r'''/*
  *
  * Hardlinks are identified by the source (device major, device minor, inode)
  * tuple.  Entries with a link count below two do not need a retained mapping.
+ * A zero inode cannot identify a hardlink group, so reject that ambiguous
+ * input instead of silently merging unrelated groups.
  */
 static int64_t
 synthesize_ino_value(struct cpio *cpio, struct archive_entry *entry)
@@ -76,10 +78,13 @@ synthesize_ino_value(struct cpio *cpio, struct archive_entry *entry)
 	uint64_t ino_new;
 	size_t i;
 
-	/* Preserve the zero value used by entries without an identity and by the
-	 * end-of-archive marker. */
-	if (ino == 0)
+	/* Preserve the zero value used by ordinary identity-free entries and by
+	 * the end-of-archive marker. */
+	if (ino == 0) {
+		if (archive_entry_nlink(entry) >= 2)
+			return (-3);
 		return (0);
+	}
 
 	if (archive_entry_nlink(entry) >= 2) {
 		for (i = 0; i < cpio->ino_list_next; ++i) {
@@ -148,6 +153,12 @@ replace_once(
 \tif (ino == -2) {
 \t\tarchive_set_error(&a->archive, ERANGE,
 \t\t    "Too many files for this cpio format");
+\t\tret_final = ARCHIVE_FATAL;
+\t\tgoto exit_write_header;
+\t}
+\tif (ino == -3) {
+\t\tarchive_set_error(&a->archive, EINVAL,
+\t\t    "Hardlink identity requires a nonzero inode");
 \t\tret_final = ARCHIVE_FATAL;
 \t\tgoto exit_write_header;
 \t}
